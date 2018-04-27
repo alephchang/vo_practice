@@ -42,6 +42,7 @@ public:
     void localMapping();
     void mapPointCulling();
     void searchInNeighbor();
+    void keyFrameCulling();
 };
 }
 

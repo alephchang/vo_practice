@@ -246,6 +246,26 @@ vector< Frame::Ptr > Frame::getBestCovisibilityKeyFrames(int N)
         return vector<Frame::Ptr>(orderedConnectedKeyFrames_.begin(),orderedConnectedKeyFrames_.begin()+N);
 }
 
+void Frame::setBadFlag()
+{
+    if(id_==0) return;
+    for(map<Frame::Ptr, int>::iterator mit = connectedKeyFrameWeights_.begin(), mend = connectedKeyFrameWeights_.end();
+                            mit != mend; ++mit){
+        mit->first->eraseConnection(shared_from_this());
+    }
+    for(size_t i = 0; i < vpMapPoints_.size(); ++i){
+        vpMapPoints_[i]->eraseObservation(shared_from_this());
+    }
+    connectedKeyFrameWeights_.clear();
+    orderedConnectedKeyFrames_.clear();
+}
+
+void Frame::eraseConnection(Frame::Ptr frame)
+{
+    if(connectedKeyFrameWeights_.count(frame) )
+        connectedKeyFrameWeights_.erase(frame);
+}
+
 void Frame::updateBestCovisibles()
 {
     vector<pair<int,Frame::Ptr> > vPairs;

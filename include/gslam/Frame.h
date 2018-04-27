@@ -89,6 +89,8 @@ public: // data members
     void addConnection(Frame::Ptr frame, const int& weight);
     void updateBestCovisibles();
     vector<Frame::Ptr> getBestCovisibilityKeyFrames(int n);
+    void setBadFlag();
+    void eraseConnection(Frame::Ptr frame);
 };
 
 }

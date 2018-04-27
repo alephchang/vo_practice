@@ -315,14 +315,7 @@ void VisualOdometry::addKeyFrame()
     map_->insertKeyFrame ( curr_ );
     ref_ = curr_;
     curr_->computeBoW();
-    if (keyFrameIds_.size() > 1) {
-        vector<unsigned long> frame_ids;
-        if (keyFrameIds_.size() == 2)
-            frame_ids = keyFrameIds_;
-        else
-            frame_ids.assign(keyFrameIds_.begin() + keyFrameIds_.size() - 3, keyFrameIds_.end());
-        Optimizer::localBA(frame_ids, map_);
-    }
+    map_->localMapping();
 }
 
 void VisualOdometry::validateProjection()

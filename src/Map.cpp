@@ -19,6 +19,7 @@
 #include "gslam/Map.h"
 #include "gslam/ORBmatcher.h"
 #include <gslam/Optimizer.h>
+#include <boost/concept_check.hpp>
 
 namespace gslam
 {
@@ -151,19 +152,16 @@ void Map::localMapping()
 {
     //0. process new key frame
     const vector<MapPoint::Ptr> vpMapPointMatches = currKF_->getMapPointMatches();
-    for(size_t i=0; i<vpMapPointMatches.size(); i++)
-    {
+    for(size_t i=0; i<vpMapPointMatches.size(); i++) {
         MapPoint::Ptr pMP = vpMapPointMatches[i];
         if(pMP){
             if(!pMP->isBad()){
-                if(!pMP->isInFrame(currKF_))
-                {
+                if(!pMP->isInFrame(currKF_)) {
                     pMP->addObservation(currKF_, i);
                     pMP->updateNormalAndDepth();
                     pMP->computeDistinctiveDescriptors();
                 }
-                else // this can only happen for new points inserted by addKeyFrame
-                {
+                else {// this can only happen for new points inserted by addKeyFrame
                     recentAddedMapPoints_.push_back(pMP);
                 }
             }
@@ -179,6 +177,51 @@ void Map::localMapping()
         Optimizer::localBA(currKF_);
     }
     //4. keyframe culling
+    keyFrameCulling();
+}
+
+void Map::keyFrameCulling()
+{
+    vector<Frame::Ptr> vpLocalKeyFrames = currKF_->orderedConnectedKeyFrames_;
+    for(vector<Frame::Ptr>::iterator vit = vpLocalKeyFrames.begin(), vend = vpLocalKeyFrames.end(); vit != vend; vit++){
+        Frame::Ptr pKF = *vit;
+        if(pKF->id_ == 0) continue;
+        const vector<MapPoint::Ptr> vpMapPoints = pKF->vpMapPoints_;
+        
+        const int thObs = 3;
+        int nRedundantObservation = 0;
+        int nMPs = 0;
+        for(size_t i = 0; i < vpMapPoints.size(); ++i){
+            MapPoint::Ptr pMP = vpMapPoints[i];
+            if(pMP && !pMP->isBad()){
+                //if(pKF->findDepth(pKF->vKeys_[i].pt) < 0) continue;
+                nMPs ++;
+                if(pMP->observations_.size() > thObs){
+                    const int& scaleLevel = pKF->vKeys_[i].octave;
+                    const map<Frame::Ptr, size_t> observation = pMP->observations_;
+                    int nObs = 0;
+                    for(map<Frame::Ptr, size_t>::const_iterator mit = observation.begin(), mend = observation.end();
+                                    mit != mend; ++mit){
+                        Frame::Ptr pKFi = mit->first;
+                        if(pKFi->id_ == pKF->id_)
+                            continue;
+                        const int &scaleLeveli = pKFi->vKeys_[mit->second].octave;
+                        if(scaleLeveli<=scaleLevel+1){
+                            nObs ++;
+                            if(nObs> thObs)
+                                break;
+                        }
+                    }
+                    if(nObs>=thObs)
+                        nRedundantObservation++;
+                }
+            }
+        }
+        if(nRedundantObservation > 0.9 * nMPs){
+            pKF->setBadFlag();
+            keyframes_.erase(pKF->id_);
+        }
+    }
 }
 
 }
