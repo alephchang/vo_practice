@@ -42,6 +42,7 @@ public:
     size_t baId_;
     size_t last_frame_seen_;
     size_t first_frame_seen_;
+    size_t track_ref_frame_;
     bool track_in_view_;
     float track_proj_x_ ;
     float track_proj_y_ ;

@@ -30,6 +30,7 @@ Camera::Camera()
     cx_ = Config::get<float>("camera.cx");
     cy_ = Config::get<float>("camera.cy");
     depth_scale_ = Config::get<float>("camera.depth_scale");
+    base_line_ = Config::get<float>("camera.base_line");
 }
 
 Vector3d Camera::world2camera ( const Vector3d& p_w, const SE3<double>& T_c_w )

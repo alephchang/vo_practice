@@ -32,12 +32,14 @@
 #include "gslam/ORBmatcher.h"
 namespace gslam
 {
+    
+VO_TYPE VisualOdometry::voType_ = VO_UNKNOW;
 
 const int TH_HIGH = 100;
 const int TH_LOW = 50;
 const int HISTO_LENGTH = 30;
 VisualOdometry::VisualOdometry() :
-    state_ ( INITIALIZING ), ref_ ( nullptr ), curr_ ( nullptr ), map_ ( new Map ), numLost_ ( 0 ), numInliers_ ( 0 )
+    state_ ( INITIALIZING ), ref_ ( nullptr ), curr_ ( nullptr ), prev_(nullptr), map_ ( new Map ), numLost_ ( 0 ), numInliers_ ( 0 )
 {
     num_of_features_    = Config::get<int> ( "number_of_features" );
     scale_factor_       = Config::get<double> ( "scale_factor" );
@@ -48,7 +50,8 @@ VisualOdometry::VisualOdometry() :
     key_frame_min_rot   = Config::get<double> ( "keyframe_rotation" );
     key_frame_min_trans = Config::get<double> ( "keyframe_translation" );
     map_point_erase_ratio_ = Config::get<double> ( "map_point_erase_ratio" );
-    orb_ = new ORB_SLAM2::ORBextractor(1000,1.2,8,20,7);
+    orbLeft_.reset(new ORB_SLAM2::ORBextractor(num_of_features_,scale_factor_,4,20,7) );
+    orbRight_.reset(new ORB_SLAM2::ORBextractor(num_of_features_,scale_factor_,4,20,7) );
 }
 
 VisualOdometry::~VisualOdometry()
@@ -60,7 +63,7 @@ void VisualOdometry::initialize()
     if( curr_->vKeys_.size() < 400) return;
     for ( size_t i=0; i<curr_->vKeys_.size(); i++ )
     {
-        double d = curr_->findDepth ( curr_->vKeys_[i] );
+        double d = curr_->getDepth( i );
         if ( d < 0 ) 
             continue;
         Vector3d p_world = ref_->camera_->pixel2world (
@@ -99,45 +102,59 @@ bool VisualOdometry::addFrame ( Frame::Ptr frame )
     case OK:
     {
         curr_ = frame;
-        curr_->Tcw_ = ref_->Tcw_;
+        curr_->Tcw_ = vel_*prev_->Tcw_;
+//        Vector3d translation = curr_->Tcw_.translation()+Vector3d(0,0,-1.3);
+//        curr_->Tcw_ = Sophus::SE3d(ref_->Tcw_.rotationMatrix(), translation);
         detectAndComputeFeatures();
         int nmatches = featureMatchingWithRef();
+        if(curr_->id_==0){
+            for(auto it : map_->mapPoints_){
+                flog_<< it.first<< " " << it.second->id_ << " "<< it.second->pos_.transpose() << std::endl;
+            }
+            for(size_t i = 0; i < curr_->vpMapPoints_.size(); ++i){
+                if(curr_->vpMapPoints_[i] != nullptr)
+                    flog_ << i << "->" << curr_->vpMapPoints_[i]->id_ << std::endl;
+            }
+        }
+        flog_ << "init guess translation: "<<curr_->Tcw_.translation().transpose() << std::endl;
         int ngoodmatches = poseEstimationOptimization();
+        flog_ << "estimated translation: "<<curr_->Tcw_.translation().transpose() << std::endl;
         flog_ << "inliers: " << ngoodmatches << " of matches: " << nmatches <<endl;
         trackLocalMap();
+        curr_->Twc_ = curr_->Tcw_.inverse();
         if ( checkEstimatedPose() == true ) // a good estimation
         {
             validateProjection(); //for validation
             optimizeMap();
             numLost_ = 0;
-            if ( checkKeyFrame() == true ) // is a key-frame
-            {
-                //triangulate for key points in key frames
-                //triangulateForNewKeyFrame();
+            if ( checkKeyFrame()){ // need a new key-frame
                 addKeyFrame();
+                curr_->Twc_ = curr_->Tcw_.inverse();
             }
         }
-        else // bad estimation due to various reasons
-        {
+        else{ // bad estimation due to various reasons
+            curr_->Tcw_ = prev_->Tcw_;
             reInitializeFrame();
-            curr_->Tcw_ = ref_->Tcw_;
+            curr_->Tcw_ = vel_ * prev_->Tcw_;
             numLost_++;
-            if ( numLost_ > max_num_lost_ )
-            {
+            if ( numLost_ > max_num_lost_ ){
                 state_ = LOST;
             }
-            flog_ << "==========There are " << map_->mapPoints_.size() << " map points, "
-                << "and " << map_->keyframes_.size() << " key frames" << endl;
-            return false;
         }
         break;
     }
     case LOST:
     {
         flog_<<"vo has lost."<<endl;
-        break;
+        return false;
     }
     }
+    if(prev_ != nullptr){
+        vel_ = curr_->Tcw_*prev_->Tcw_.inverse(); 
+        flog_ << "velocity: " << vel_.translation().transpose() << std::endl;
+    }
+    curr_->Twc_ = curr_->Tcw_.inverse();
+    prev_ = curr_;
     flog_ << "==========There are "<< map_->mapPoints_.size()<<" map points, "
         <<"and "<< map_->keyframes_.size()<< " key frames"<< endl;
     if(map_->mapPoints_.empty()){
@@ -157,25 +174,27 @@ bool VisualOdometry::setLogFile(const std::string& logpath)
 
 void VisualOdometry::detectAndComputeFeatures()
 {
-    (*orb_)(curr_->color_, cv::Mat(), curr_->vKeys_, curr_->descriptors_);
-    curr_->vpMapPoints_.assign(curr_->vKeys_.size(), nullptr);
-    curr_->vbOutlier_.assign(curr_->vKeys_.size(), true);
-    curr_->N_ = curr_->vpMapPoints_.size();
-    curr_->vInvLevelSigma2_ = orb_->GetInverseScaleSigmaSquares();
-    //descriptors_curr_.convertTo(descriptors_curr_, CV_32F);
+    if(voType_ == VO_RGBD)//assign orb right null means use imDepth to compute depth
+        orbRight_=nullptr;
+    curr_->setORBextractor(orbLeft_, orbRight_);
+    curr_->detectAndComputeFeatures();
 }
 
 int VisualOdometry::featureMatchingWithRef()
 {
     ORBmatcher matcher(0.8,true);
     vector<MapPoint::Ptr> vpMapPointMatches;
-    int nmatch = matcher.searchByBoW(ref_, curr_, vpMapPointMatches);
+    size_t mapPointsCountInFrame=0;
+    for(size_t i = 0; i < prev_->vpMapPoints_.size(); ++i){
+        if(prev_->vpMapPoints_[i] != nullptr)
+                mapPointsCountInFrame ++;
+    }
+    flog_ << "mapPointsCountInFrame: " << mapPointsCountInFrame << std::endl;
+    int nmatch = matcher.searchByBoW(prev_, curr_, vpMapPointMatches);
     //flog_ << "match with ORBmatcher :" <<std::endl;
-    vMatch3dpts_.clear();
     vMatch2dkpIndex_.clear();
     for(size_t i = 0; i < vpMapPointMatches.size(); ++i){
         if(vpMapPointMatches[i]!=nullptr){
-            vMatch3dpts_.push_back(vpMapPointMatches[i]);
             vMatch2dkpIndex_.push_back(i);
            //flog_ << vpMapPointMatches[i]->id_ << " " << i << std::endl;
         }
@@ -190,14 +209,9 @@ int VisualOdometry::poseEstimationOptimization()
     numInliers_ = Optimizer::poseOptimization(curr_);
     // Discard outliers
     int nmatches = 0;
-    for(int i =0; i<curr_->N_; i++)
-    {
-        if(curr_->vpMapPoints_[i])
-        {
-            if(curr_->vbOutlier_[i])
-            {
-                MapPoint::Ptr pMP = curr_->vpMapPoints_[i];
-
+    for(int i =0; i<curr_->N_; i++){
+        if(curr_->vpMapPoints_[i]){
+            if(curr_->vbOutlier_[i]){
                 curr_->vpMapPoints_[i]=nullptr;
                 curr_->vbOutlier_[i]=false;
                 //nmatches--;
@@ -219,11 +233,11 @@ bool VisualOdometry::checkEstimatedPose()
         return false;
     }
     // if the motion is too large, it is probably wrong
-    SE3<double> T_r_c = ref_->Tcw_ * curr_->Tcw_.inverse();
+    SE3<double> T_r_c = prev_->Tcw_ * curr_->Tcw_.inverse();
     Sophus::Vector6d d = T_r_c.log();
-    flog_ << "motion change " << d.norm() << endl;
-    if ( d.norm() > 3.0 )
-    {
+    Vector3d translation = curr_->Tcw_.translation() - prev_->Tcw_.translation();
+    flog_ << "motion change " << d.norm() << " translation: "<<translation.transpose()<< endl;
+    if ( d.norm() > 4.0 ) {
         flog_<<"reject because motion is too large: "<<d.norm() <<endl;
         return false;
     }
@@ -232,10 +246,15 @@ bool VisualOdometry::checkEstimatedPose()
 
 bool VisualOdometry::checkKeyFrame()
 {
+    //1. few match
+    if (numInliers_<50){
+        return true;
+    }
     SE3<double> T_r_c = ref_->Tcw_ * curr_->Tcw_.inverse();
     Sophus::Vector6d d = T_r_c.log();
     Vector3d trans = d.head<3>();
     Vector3d rot = d.tail<3>();
+    //2. large motion from previous key frame
     if ( rot.norm() >key_frame_min_rot || trans.norm() >key_frame_min_trans )
         return true;
     return false;
@@ -246,7 +265,7 @@ void VisualOdometry::reInitializeFrame()
     map_->mapPoints_.clear();
     for (size_t i = 0; i<curr_->vKeys_.size(); i++)
     {
-        double d = curr_->findDepth(curr_->vKeys_[i]);
+        double d = curr_->getDepth(i);
         if (d < 0)
             continue;
         Vector3d p_world = ref_->camera_->pixel2world(
@@ -264,6 +283,7 @@ void VisualOdometry::reInitializeFrame()
     }
     keyFrameIds_.push_back(curr_->id_);
     map_->insertKeyFrame(curr_);
+    prev_ = curr_;
     flog_ << "re init frame " << endl;
 }
 
@@ -272,7 +292,7 @@ void VisualOdometry::addKeyFrame()
     //1. sort the point by depth
     vector<pair<double, size_t> > vDepthIdx;
     for(size_t i = 0; i < curr_->N_; ++i){
-        double z = curr_->findDepth(curr_->vKeys_[i]);
+        double z = curr_->getDepth(i);
         if(z>0)
             vDepthIdx.push_back(make_pair(z, i));
     }
@@ -305,7 +325,7 @@ void VisualOdometry::addKeyFrame()
                 map_->insertMapPoint(pNewMp);
             }
             nPts++;
-            if(nPts>100)
+            if(nPts>200)
                 break;
         }
     }
@@ -315,7 +335,12 @@ void VisualOdometry::addKeyFrame()
     map_->insertKeyFrame ( curr_ );
     ref_ = curr_;
     curr_->computeBoW();
+    ///TODO: local BA
     map_->localMapping();
+    flog_ << "translation after local BA: " << curr_->Tcw_.translation().transpose() << std::endl;
+    for(size_t i = 0; i < curr_->orderedConnectedKeyFrames_.size(); ++i){
+        flog_ << curr_->orderedWeights_[i] << "->" << curr_->orderedConnectedKeyFrames_[i]->id_ << std::endl;
+    }
 }
 
 void VisualOdometry::validateProjection()
@@ -343,7 +368,7 @@ void VisualOdometry::addMapPoints()
     {
         if ( matched[i] == true )   
             continue;
-        double d = ref_->findDepth ( curr_->vKeys_[i] );
+        double d = ref_->getDepth( i );
         if ( d<0 )  
             continue;
         Vector3d p_world = ref_->camera_->pixel2world (
@@ -395,11 +420,6 @@ void VisualOdometry::optimizeMap()
         iter++;
     }
     
-    if (vMatch2dkpIndex_.size() < 100 || numInliers_ * 2 < vMatch2dkpIndex_.size()) {
-        addMapPoints();
-        if (vMatch2dkpIndex_.size() > 100 && numInliers_ * 2 < vMatch2dkpIndex_.size())
-            flog_ << "add map points because of low inliers ratio" << endl;
-    }
     if ( map_->mapPoints_.size() > 1000 && map_point_erase_ratio_<0.30)  
     {
         map_point_erase_ratio_ += 0.05;
@@ -438,7 +458,7 @@ void VisualOdometry::updateLocalKeyFrames()
     Frame::Ptr pKFmax = nullptr;
     vLocalKeyFrames_.clear();
     vLocalKeyFrames_.reserve(3*keyframeCounter.size());
-    // All keyframes that observe a map point are included in the local map. Also check which keyframe shares most points
+    // All keyframes that observe a map point are included in the local map. 
     for(map<Frame::Ptr,int>::const_iterator it = keyframeCounter.begin(); it != keyframeCounter.end(); ++it){
         Frame::Ptr pKF = it->first;
         if(it->second>max){
@@ -456,8 +476,11 @@ void VisualOdometry::updateLocalMapPoints()
         const vector<MapPoint::Ptr> vMPs = kf->vpMapPoints_;
         for(auto mp : vMPs){
             if(mp==nullptr) continue;
-            if(!mp->isBad())
+            if(mp->track_ref_frame_==curr_->id_) continue;
+            if(!mp->isBad()){
                 vLocalMapPts_.push_back(mp);
+                mp->track_ref_frame_ = curr_->id_;
+            }
         }
     }
 }
@@ -488,7 +511,8 @@ void VisualOdometry::searchLocalMapPoints()
     }
     if(nTomatch>0){
         ORBmatcher matcher(0.8);
-        matcher.searchByProjection(curr_,vLocalMapPts_,5);
+        int nmatch = matcher.searchByProjection(curr_,vLocalMapPts_,1.2);
+        flog_ << "new match found by projection: " << nmatch << std::endl;
     }
 }
 
@@ -498,22 +522,25 @@ bool VisualOdometry::trackLocalMap()
     updateLocalMapPoints();
     searchLocalMapPoints();
     numInliers_ = Optimizer::poseOptimization(curr_);
-    int nmatch = 0;
+    flog_ << "translation after track local map: "<<curr_->Tcw_.translation().transpose() << std::endl;
+    int ngoodmatch = 0, nmatch = 0;
     for(size_t i = 0; i < curr_->vpMapPoints_.size(); ++i){
         MapPoint::Ptr pMp = curr_->vpMapPoints_[i];
         if(pMp){
+            nmatch ++;
             if(curr_->vbOutlier_[i]){
                 curr_->vpMapPoints_[i]=nullptr;
             }
             else{
                 if(pMp->observations_.empty()==false)
-                    nmatch++;
+                    ngoodmatch++;
                 pMp->found_times_++;
                 pMp->last_frame_seen_ = curr_->id_;
             }
         }
     }
-    if(nmatch < 30)
+    flog_ << "good match: " << ngoodmatch << " total match: " << nmatch << std::endl;
+    if(ngoodmatch < 30)
         return false;
     else
         return true;

@@ -23,6 +23,7 @@
 #include "gslam/common_include.h"
 #include "gslam/Camera.h"
 #include "gslam/ORBVocabulary.h"
+#include "gslam/ORBextractor.h"
 #include "gslam/MapPoint.h"
 #include "3rdparty/DBoW2/DBoW2/BowVector.h"
 #include "3rdparty/DBoW2/DBoW2/FeatureVector.h"
@@ -39,11 +40,19 @@ public:
     unsigned long                  id_;         // id of this frame
     double                         timeStamp_; // when it is recorded
     SE3<double>                    Tcw_;      // transform from world to camera
+    SE3<double>                    Twc_;      // transform from camera to world, get camera center;       
     Camera::Ptr                    camera_;     // Pinhole RGBD Camera model 
-    Mat                            color_, depth_; // color and depth image 
+    Mat                            imLeft_, imDepth_; // color and depth image 
+    Mat                            imRight_;     
+    std::vector<float>             uRight_;
+    std::vector<float>             uDepth_;
     std::vector<gslam::MapPoint::Ptr>     vpMapPoints_;  // MapPoints associated to keypoints, NULL pointer if no association.
     std::vector<cv::KeyPoint>      vKeys_;
+    std::vector<cv::KeyPoint>      vKeysRight_;
     cv::Mat                        descriptors_;
+    cv::Mat                        descriptorsRight_;
+    std::shared_ptr<ORB_SLAM2::ORBextractor> orbLeft_;  // orb detector and computer 
+    std::shared_ptr<ORB_SLAM2::ORBextractor> orbRight_;  // orb detector and computer 
     // Bag of Words Vector structures.
     DBoW2::BowVector               BowVec_;
     DBoW2::FeatureVector           featVec_;
@@ -65,8 +74,13 @@ public: // data members
     
     static Frame::Ptr createFrame(); 
     
-    // find the depth in depth map
-    double findDepth( const cv::KeyPoint& kp );
+    void setORBextractor(std::shared_ptr<ORB_SLAM2::ORBextractor> orbLeft, std::shared_ptr<ORB_SLAM2::ORBextractor> orbRight=nullptr);
+    void detectAndComputeFeatures();
+    void computeStereoMatches();
+    void collectDetphFromImDetph();
+    inline double getDepth(size_t kpIdx){
+        return uDepth_[kpIdx];
+    }
     
     // Get Camera Center
     Vector3d getCamCenter() const;

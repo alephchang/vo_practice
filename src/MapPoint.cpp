@@ -33,7 +33,8 @@ MapPoint::MapPoint ( long unsigned int id, const Vector3d& position, const Vecto
 : id_(id), pos_(position), norm_(norm), good_(true), visible_times_(1), found_times_(1), descriptor_(descriptor),fuseCandidateForKF_(0)
 {
     last_frame_seen_ = frame->id_;
-    first_frame_seen_ = frame->id_;
+    first_frame_seen_ = frame->id_; 
+    track_ref_frame_ = 0;
 }
 
 MapPoint::Ptr MapPoint::createMapPoint()
@@ -115,6 +116,7 @@ void MapPoint::updateNormalAndDepth()
         n++;
     }
     norm_ = normal / n;
+    norm_.normalize();
 }
 bool MapPoint::isInFrame(shared_ptr< Frame > frame)
 {

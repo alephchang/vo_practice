@@ -105,20 +105,6 @@ int ORBmatcher::searchByBoW(Frame::Ptr pKF,Frame::Ptr F, vector<MapPoint::Ptr> &
                     if(static_cast<float>(bestDist1)<mfNNratio*static_cast<float>(bestDist2))
                     {
                         vpMapPointMatches[bestIdxF]=pMP;
-
-                        const cv::KeyPoint &kp = pKF->vKeys_[realIdxKF];
-
-                        if(false) //(mbCheckOrientation)
-                        {
-                            float rot = kp.angle-F->vKeys_[bestIdxF].angle;
-                            if(rot<0.0)
-                                rot+=360.0f;
-                            int bin = round(rot*factor);
-                            if(bin==HISTO_LENGTH)
-                                bin=0;
-                            assert(bin>=0 && bin<HISTO_LENGTH);
-                            rotHist[bin].push_back(bestIdxF);
-                        }
                         nmatches++;
                     }
                 }
@@ -140,13 +126,12 @@ int ORBmatcher::searchByBoW(Frame::Ptr pKF,Frame::Ptr F, vector<MapPoint::Ptr> &
     return nmatches;
 }   
 
-int ORBmatcher::searchByProjection(Frame::Ptr F, const vector< MapPoint::Ptr >& vpMapPoints, const float th)
+int ORBmatcher::searchByProjection(Frame::Ptr F, const vector< MapPoint::Ptr >& vpMapPoints, const float r)
 {
     int nmatches=0;
     for(size_t i=0; i<vpMapPoints.size(); i++){
         MapPoint::Ptr pMp = vpMapPoints[i];
         if(pMp->isBad()) continue;
-        float r = 4* th;
         const vector<size_t> vIndices = F->getFeaturesInAera(pMp->track_proj_x_, pMp->track_proj_y_, r);
         if(vIndices.empty()) continue;
         const cv::Mat MPdescriptor = pMp->getDescriptor();

@@ -308,10 +308,11 @@ void Optimizer::localBA(Frame::Ptr pKF)
     
     optimizer.initializeOptimization();
     optimizer.optimize(5);
+    optimizer.setVerbose(true);
     
     //TODO:
         // Check inlier observations
-    {//do more?
+    if(0){//do more?
     for(size_t i=0, iend=vpEdgesMono.size(); i<iend;i++){
         g2o::EdgeSE3ProjectXYZ* e = vpEdgesMono[i];
         MapPoint::Ptr pMP = vpMapPointEdgeMono[i];
@@ -463,7 +464,7 @@ int Optimizer::poseOptimization(Frame::Ptr pFrame)
     {
         vSE3->setEstimate(Converter::toSE3Quat(pFrame->Tcw_));
         optimizer.initializeOptimization(0);
-        optimizer.setVerbose(true);
+//        optimizer.setVerbose(true);
         optimizer.optimize(its[it]);
 
         nBad=0;

@@ -169,7 +169,7 @@ void Map::localMapping()
     }
     currKF_->updateConnections();
     //1. MapPoint Culling
-    mapPointCulling();
+    //mapPointCulling();
     //2. search in neighbor to fuse
     searchInNeighbor();
     //3. optimize map
@@ -177,7 +177,7 @@ void Map::localMapping()
         Optimizer::localBA(currKF_);
     }
     //4. keyframe culling
-    keyFrameCulling();
+    //keyFrameCulling();
 }
 
 void Map::keyFrameCulling()

@@ -28,6 +28,11 @@
 #include <fstream>
 namespace gslam 
 {
+enum VO_TYPE{
+    VO_STEREO = 0,
+    VO_RGBD,
+    VO_UNKNOW
+};    
 class VisualOdometry
 {
 public:
@@ -43,8 +48,11 @@ public:
     
     Frame::Ptr  ref_;       // reference key-frame 
     Frame::Ptr  curr_;      // current frame 
+    Frame::Ptr  prev_;      // last frame    
+    Sophus::SE3d vel_;
     vector<unsigned long> keyFrameIds_;
-    cv::Ptr<ORB_SLAM2::ORBextractor> orb_;  // orb detector and computer 
+    std::shared_ptr<ORB_SLAM2::ORBextractor> orbLeft_;  // orb detector and computer 
+    std::shared_ptr<ORB_SLAM2::ORBextractor> orbRight_;  // orb detector and computer 
     
     vector<MapPoint::Ptr>   vMatch3dpts_;       // matched 3d points 
     vector<int>             vMatch2dkpIndex_;  // matched 2d pixels (index of kp_curr)
@@ -68,7 +76,7 @@ public:
 
     //log file output
     std::ofstream flog_;
-    
+    static VO_TYPE voType_;
 public: // functions 
     VisualOdometry();
     ~VisualOdometry();

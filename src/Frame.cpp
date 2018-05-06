@@ -17,8 +17,9 @@
  *
  */
 #include "gslam/Frame.h"
+#include "gslam/ORBmatcher.h"
 #include <boost/concept_check.hpp>
-
+using std::vector;
 namespace gslam
 {
 shared_ptr<ORBVocabulary>  Frame::pORBvocab_=nullptr;
@@ -29,7 +30,7 @@ Frame::Frame()
 }
 
 Frame::Frame ( long id, double time_stamp, SE3<double> T_c_w, Camera::Ptr camera, Mat color, Mat depth )
-: id_(id), timeStamp_(time_stamp), Tcw_(T_c_w), camera_(camera), color_(color), depth_(depth) 
+: id_(id), timeStamp_(time_stamp), Tcw_(T_c_w), camera_(camera), imLeft_(color), imDepth_(depth) 
 {
 
 }
@@ -45,31 +46,229 @@ Frame::Ptr Frame::createFrame()
     return Frame::Ptr( new Frame(factory_id++) );
 }
 
-double Frame::findDepth ( const cv::KeyPoint& kp )
+void Frame::setORBextractor(shared_ptr< ORB_SLAM2::ORBextractor > orbLeft, shared_ptr< ORB_SLAM2::ORBextractor > orbRight)
 {
-    int x = cvRound(kp.pt.x);
-    int y = cvRound(kp.pt.y);
-    ushort d = depth_.ptr<ushort>(y)[x];
-    if ( d!=0 )
-    {
-        return double(d)/camera_->depth_scale_;
+    orbLeft_ = orbLeft;
+    orbRight_ = orbRight;
+}
+
+void Frame::detectAndComputeFeatures()
+{
+    (*orbLeft_)(imLeft_, cv::Mat(), vKeys_, descriptors_);
+    vpMapPoints_.assign(vKeys_.size(), nullptr);
+    vbOutlier_.assign(vKeys_.size(), true);
+    N_ = vpMapPoints_.size();
+    vInvLevelSigma2_ = orbLeft_->GetInverseScaleSigmaSquares();
+    //descriptors_curr_.convertTo(descriptors_curr_, CV_32F);
+    if(orbRight_!=nullptr){
+        (*orbRight_)(imRight_, cv::Mat(), vKeysRight_, descriptorsRight_);
+        computeStereoMatches();
     }
-    else 
+    else if(!imDepth_.empty()){
+        collectDetphFromImDetph();
+    }
+    else{
+        std::cout << "Only support RGBD or stereo!"<<std::endl;
+        assert(false);
+    }
+}
+
+void Frame::computeStereoMatches()
+{
+    uRight_ = vector<float>(N_,-1.0f);
+    uDepth_ = vector<float>(N_,-1.0f);
+    
+    const int thOrbDist = (ORBmatcher::TH_HIGH+ORBmatcher::TH_LOW)/2;
+
+    const int nRows = orbLeft_->mvImagePyramid[0].rows;
+    vector<vector<size_t> > vRowIndices(nRows,vector<size_t>());
+
+    for(int i=0; i<nRows; i++)
+        vRowIndices[i].reserve(200);
+
+    const int Nr = vKeysRight_.size();
+
+    for(int iR=0; iR<Nr; iR++)
     {
-        // check the nearby points 
-        int dx[4] = {-1,0,1,0};
-        int dy[4] = {0,-1,0,1};
-        for ( int i=0; i<4; i++ )
+        const cv::KeyPoint &kp = vKeysRight_[iR];
+        const float &kpY = kp.pt.y;
+        const float r = 2.0f*orbRight_->GetScaleFactors()[vKeysRight_[iR].octave];
+        const int maxr = ceil(kpY+r);
+        const int minr = floor(kpY-r);
+
+        for(int yi=minr;yi<=maxr;yi++)
+            vRowIndices[yi].push_back(iR);
+    }
+    
+    // Set limits for search
+    const float minD = 0;
+    const float maxD = camera_->fx_;
+    const float bf = camera_->base_line_ * camera_->fx_;
+
+    // For each left keypoint search a match in the right image
+    vector<pair<int, int> > vDistIdx;
+    vDistIdx.reserve(N_);
+    
+    for(int iL=0; iL<N_; iL++)
+    {
+        const cv::KeyPoint &kpL = vKeys_[iL];
+        const int &levelL = kpL.octave;
+        const float &vL = kpL.pt.y;
+        const float &uL = kpL.pt.x;
+        
+         const vector<size_t> &vCandidates = vRowIndices[vL];
+
+        if(vCandidates.empty())  continue;
+
+        const float minU = uL-maxD;
+        const float maxU = uL-minD;
+
+        if(maxU<0)    continue;
+
+        int bestDist = ORBmatcher::TH_HIGH;
+        size_t bestIdxR = 0; 
+        const cv::Mat &dL = descriptors_.row(iL);
+        // Compare descriptor to right keypoints
+        for(size_t iC=0; iC<vCandidates.size(); iC++)
         {
-            d = depth_.ptr<ushort>( y+dy[i] )[x+dx[i]];
-            if ( d!=0 )
+            const size_t iR = vCandidates[iC];
+            const cv::KeyPoint &kpR = vKeysRight_[iR];
+
+            if(kpR.octave<levelL-1 || kpR.octave>levelL+1)
+                continue;
+
+            const float &uR = kpR.pt.x;
+
+            if(uR>=minU && uR<=maxU)
             {
-                return double(d)/camera_->depth_scale_;
+                const cv::Mat &dR = descriptorsRight_.row(iR);
+                const int dist = ORBmatcher::DescriptorDistance(dL,dR);
+
+                if(dist<bestDist)
+                {
+                    bestDist = dist;
+                    bestIdxR = iR;
+                }
+            }        
+        }
+        
+        // Subpixel match by correlation
+        if(bestDist<thOrbDist)
+        {
+            // coordinates in image pyramid at keypoint scale
+            const float uR0 = vKeysRight_[bestIdxR].pt.x;
+            const float scaleFactor = orbLeft_->GetInverseScaleFactors()[kpL.octave];
+            const float scaleduL = round(kpL.pt.x*scaleFactor);
+            const float scaledvL = round(kpL.pt.y*scaleFactor);
+            const float scaleduR0 = round(uR0*scaleFactor);
+
+            // sliding window search
+            const int w = 5;
+            cv::Mat IL = orbLeft_->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduL-w,scaleduL+w+1);
+            IL.convertTo(IL,CV_32F);
+            IL = IL - IL.at<float>(w,w) *cv::Mat::ones(IL.rows,IL.cols,CV_32F);
+
+            int bestDist = INT_MAX;
+            int bestincR = 0;
+            const int L = 5;
+            vector<float> vDists;
+            vDists.resize(2*L+1);
+
+            const float iniu = scaleduR0+L-w;
+            const float endu = scaleduR0+L+w+1;
+            if(iniu<0 || endu >= orbRight_->mvImagePyramid[kpL.octave].cols)
+                continue;
+
+            for(int incR=-L; incR<=+L; incR++)
+            {
+                cv::Mat IR = orbRight_->mvImagePyramid[kpL.octave].rowRange(scaledvL-w,scaledvL+w+1).colRange(scaleduR0+incR-w,scaleduR0+incR+w+1);
+                IR.convertTo(IR,CV_32F);
+                IR = IR - IR.at<float>(w,w) *cv::Mat::ones(IR.rows,IR.cols,CV_32F);
+
+                float dist = cv::norm(IL,IR,cv::NORM_L1);
+                if(dist<bestDist)
+                {
+                    bestDist =  dist;
+                    bestincR = incR;
+                }
+
+                vDists[L+incR] = dist;
+            } 
+            
+            if(bestincR==-L || bestincR==L)
+                continue;
+
+            // Sub-pixel match (Parabola fitting)
+            const float dist1 = vDists[L+bestincR-1];
+            const float dist2 = vDists[L+bestincR];
+            const float dist3 = vDists[L+bestincR+1];
+
+            const float deltaR = (dist1-dist3)/(2.0f*(dist1+dist3-2.0f*dist2));
+
+            if(deltaR<-1 || deltaR>1)
+                continue;
+
+            // Re-scaled coordinate
+            float bestuR = orbLeft_->GetScaleFactors()[kpL.octave]*((float)scaleduR0+(float)bestincR+deltaR);
+
+            float disparity = (uL-bestuR);
+
+            if(disparity>=minD && disparity<maxD)
+            {
+                if(disparity<=0)
+                {
+                    disparity=0.01;
+                    bestuR = uL-0.01;
+                }
+                uDepth_[iL]=bf/disparity;
+                uRight_[iL] = bestuR;
+                vDistIdx.push_back(pair<int,int>(bestDist,iL));
+            }           
+        }
+    }
+    
+    sort(vDistIdx.begin(),vDistIdx.end());
+    const float median = vDistIdx[vDistIdx.size()/2].first;
+    const float thDist = 1.5f*1.4f*median;
+
+    for(int i=vDistIdx.size()-1;i>=0;i--)
+    {
+        if(vDistIdx[i].first<thDist)
+            break;
+        else
+        {
+            uRight_[vDistIdx[i].second]=-1;
+            uDepth_[vDistIdx[i].second]=-1;
+        }
+    }
+}
+
+///TODO: redefine findDepth for stereo type
+void Frame::collectDetphFromImDetph()
+{
+    uDepth_ = vector<float>(N_,-1.0f);
+    for(size_t i = 0; i < N_; ++i){
+        const cv::KeyPoint &kp = vKeys_[i];
+        int x = cvRound(kp.pt.x);
+        int y = cvRound(kp.pt.y);
+        ushort d = imDepth_.ptr<ushort>(y)[x];
+        if ( d!=0 ) {
+            uDepth_[i] = float(d)/camera_->depth_scale_;
+        }
+        else {
+            // check the nearby points 
+            int dx[4] = {-1,0,1,0};
+            int dy[4] = {0,-1,0,1};
+            for ( int i=0; i<4; i++ ){
+                d = imDepth_.ptr<ushort>( y+dy[i] )[x+dx[i]];
+                if ( d!=0 ){
+                    uDepth_[i] = float(d)/camera_->depth_scale_;
+                }
             }
         }
     }
-    return -1.0;
 }
+
 
 void Frame::setPose ( const SE3<double>& T_c_w )
 {
@@ -79,7 +278,7 @@ void Frame::setPose ( const SE3<double>& T_c_w )
 
 Vector3d Frame::getCamCenter() const
 {
-    return Tcw_.inverse().translation();
+    return Twc_.translation();
 }
 
 bool Frame::isInFrame ( const Vector3d& pt_world )
@@ -94,8 +293,8 @@ bool Frame::isInFrame ( const Vector3d& pt_world )
 bool Frame::isInFrame(const Vector2d& pixel)
 {
     return pixel(0,0)>0 && pixel(1,0)>0 
-        && pixel(0,0)<color_.cols 
-        && pixel(1,0)<color_.rows;
+        && pixel(0,0)<imLeft_.cols 
+        && pixel(1,0)<imLeft_.rows;
 }
 
 bool Frame::isInFrustum(MapPoint::Ptr pMp)
@@ -111,11 +310,11 @@ bool Frame::isInFrustum(MapPoint::Ptr pMp)
     const float invz = 1.0f/PcZ;
     const float u=camera_->fx_*PcX*invz+camera_->cx_;
     const float v=camera_->fy_*PcY*invz+camera_->cy_;
-    if(u<0.0 || u > static_cast<double>(color_.cols)) return false;
-    if(v<0.0 || v > static_cast<double>(color_.rows)) return false;
+    if(u<0.0 || u > static_cast<double>(imLeft_.cols)) return false;
+    if(v<0.0 || v > static_cast<double>(imLeft_.rows)) return false;
     
     Vector3d Pn = pMp->norm_;
-    assert(std::abs<double>(Pn.norm()-1.0)<1e-10);
+    //assert(std::abs<double>(Pn.norm()-1.0)<1e-10);
     Vector3d Ow = -Tcw_.rotationMatrix().transpose()*Tcw_.translation();
     Vector3d PO = P - Ow;
     const double viewCos = PO.dot(Pn)/PO.norm();
@@ -135,7 +334,7 @@ vector<size_t> Frame::getFeaturesInAera(float x, float y, float r) const
         const cv::KeyPoint &kp = vKeys_[i];
         float dx = kp.pt.x - x;
         float dy = kp.pt.y - y;
-        if(fabs(dx)<r && fabs(dy) < r)
+        if(dx<r&&dx>-r && dy<r&&dy>-r)//fabs is slow?
             vIndices.push_back(i);
     }
     return vIndices;
@@ -230,7 +429,7 @@ void Frame::updateConnections()
 
 void Frame::addConnection(Frame::Ptr frame, const int& weight)
 {
-    if(connectedKeyFrameWeights_.count(frame))
+    if(!connectedKeyFrameWeights_.count(frame))
         connectedKeyFrameWeights_[frame] = weight;
     else if(connectedKeyFrameWeights_[frame]!=weight)
         connectedKeyFrameWeights_[frame] = weight;
@@ -254,7 +453,11 @@ void Frame::setBadFlag()
         mit->first->eraseConnection(shared_from_this());
     }
     for(size_t i = 0; i < vpMapPoints_.size(); ++i){
-        vpMapPoints_[i]->eraseObservation(shared_from_this());
+        if(vpMapPoints_[i]!=nullptr){
+            vpMapPoints_[i]->eraseObservation(shared_from_this());
+            vpMapPoints_[i] = nullptr;
+        }
+        
     }
     connectedKeyFrameWeights_.clear();
     orderedConnectedKeyFrames_.clear();

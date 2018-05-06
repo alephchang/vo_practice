@@ -15,7 +15,7 @@ public:
     static int DescriptorDistance(const cv::Mat &a, const cv::Mat &b);
     int searchByBoW(Frame::Ptr pKF, Frame::Ptr F, std::vector<MapPoint::Ptr> &vpMapPointMatches);
     int searchByProjection(Frame::Ptr F, const vector<MapPoint::Ptr> &vpMapPoints, const float th);
-    vector<size_t> fuse(Frame::Ptr pKF, const vector<MapPoint::Ptr> &vpMapPoints, const float th=3.0);
+    vector<size_t> fuse(Frame::Ptr pKF, const vector<MapPoint::Ptr> &vpMapPoints, const float th=1.0);
     
 public:
 

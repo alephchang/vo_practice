@@ -3,8 +3,8 @@
 
 int main(int argc, char** argv)
 {
-    testSE3QuatError();
     run_vo(argc, argv);
+    //testSE3QuatError();
     //validate_result(argc, argv);
 }
 /*
