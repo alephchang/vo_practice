@@ -1,6 +1,5 @@
 #include"run_vo.h"
 #include<stdio.h>
-#include "gslam/g2o_types.h"
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
 #include<boost/timer.hpp>
@@ -78,6 +77,7 @@ int run_vo( int argc, char** argv )
     string orbVocabDir= gslam::Config::get<string>("orb_vocab_dir");
     cout << endl << "Loading ORB Vocabulary. This could take a while..." << endl;
 
+    boost::timer timer1;
     gslam::Frame::pORBvocab_ = std::make_shared<gslam::ORBVocabulary>();
     bool bVocLoad = gslam::Frame::pORBvocab_->loadFromTextFile(orbVocabDir);
     if(!bVocLoad)
@@ -87,26 +87,32 @@ int run_vo( int argc, char** argv )
         exit(-1);
     }
     cout << "Vocabulary loaded!" << endl << endl;
+    cout<<"ORB load costs time : "<<timer1.elapsed() <<endl;
+    
+    
     gslam::Camera::Ptr camera ( new gslam::Camera );
-
+    
     cout<<"read total "<<rgb_files.size() <<" entries"<<endl;
     vector<SE3<double> > estimated_pose;
     Mat gray;
     //std::string program=std::string(argv[0])+ "_" + std::to_string(getpid())+".prof";
     //ProfilerStart(program.c_str());
     boost::timer timer;
-    for ( int i=0; i<rgb_files.size(); i++ )
-    {
+    for ( int i=0; i<rgb_files.size(); i++ ) {
+        
         cout<<"****** loop "<<i<<" ******"<<endl;
         Mat color = cv::imread ( rgb_files[i] );
-        if ( color.data==nullptr )
+        if ( color.data==nullptr ){
+            cout << "Fail to load image." << endl;
             break;
+        }
         cvtColor(color, gray, CV_RGB2GRAY);
         gslam::Frame::Ptr pFrame = gslam::Frame::createFrame();
         pFrame->id_ = i;
         pFrame->camera_ = camera;
         pFrame->imLeft_ = gray;
         pFrame->timeStamp_ = rgb_times[i];
+        
         if(gslam::VisualOdometry::voType_ == gslam::VO_RGBD){
             Mat depth = cv::imread ( depth_files[i], -1 );
             if( depth.data==nullptr ) break;
@@ -154,10 +160,4 @@ int run_vo( int argc, char** argv )
     }
     fo.close();
     return 0;
-}
-void testSE3QuatError()
-{
-	Eigen::Quaterniond se3_r;
-	g2o::SE3Quat Tcw;
-	Tcw.setRotation(se3_r);
 }

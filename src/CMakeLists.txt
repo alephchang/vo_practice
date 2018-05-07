@@ -4,7 +4,7 @@ add_library( gslam SHARED
     Map.cpp
     Camera.cpp
     Config.cpp
-    g2o_types.cpp
+#    g2o_types.cpp
     VisualOdometry.cpp
     Optimizer.cpp
     ORBextractor.cc

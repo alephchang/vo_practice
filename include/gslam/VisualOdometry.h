@@ -54,9 +54,6 @@ public:
     std::shared_ptr<ORB_SLAM2::ORBextractor> orbLeft_;  // orb detector and computer 
     std::shared_ptr<ORB_SLAM2::ORBextractor> orbRight_;  // orb detector and computer 
     
-    vector<MapPoint::Ptr>   vMatch3dpts_;       // matched 3d points 
-    vector<int>             vMatch2dkpIndex_;  // matched 2d pixels (index of kp_curr)
-   
     int numInliers_;        // number of inlier features in icp
     int numLost_;           // number of lost times
     
@@ -90,7 +87,7 @@ protected:
     // inner operation 
     void detectAndComputeFeatures();
     void featureMatching();
-    int featureMatchingWithRef();
+    int featureMatchingWithPrev();
     void poseEstimationPnP(); 
     int poseEstimationOptimization();
     bool trackLocalMap(); //based on the pose estimation, find more match between map and keypoints;

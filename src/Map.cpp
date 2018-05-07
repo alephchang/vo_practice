@@ -168,6 +168,7 @@ void Map::localMapping()
         }
     }
     currKF_->updateConnections();
+    
     //1. MapPoint Culling
     //mapPointCulling();
     //2. search in neighbor to fuse
