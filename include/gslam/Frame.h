@@ -43,14 +43,16 @@ public:
     SE3<double>                    Twc_;      // transform from camera to world, get camera center;       
     Camera::Ptr                    camera_;     // Pinhole RGBD Camera model 
     Mat                            imLeft_, imDepth_; // color and depth image 
-    Mat                            imRight_;     
-    std::vector<float>             uRight_;
-    std::vector<float>             uDepth_;
+    Mat                            imRight_;     //right image
+    
+    std::vector<float>             uRight_; //about stereo disparity
+    std::vector<float>             uDepth_; //depth for stereo disparity
+    
     std::vector<gslam::MapPoint::Ptr>     vpMapPoints_;  // MapPoints associated to keypoints, NULL pointer if no association.
     std::vector<cv::KeyPoint>      vKeys_;
     std::vector<cv::KeyPoint>      vKeysRight_;
     cv::Mat                        descriptors_;
-    cv::Mat                        descriptorsRight_;
+    cv::Mat                        descriptorsRight_;   //for stereo match 
     std::shared_ptr<ORB_SLAM2::ORBextractor> orbLeft_;  // orb detector and computer 
     std::shared_ptr<ORB_SLAM2::ORBextractor> orbRight_;  // orb detector and computer 
     // Bag of Words Vector structures.
@@ -58,15 +60,18 @@ public:
     DBoW2::FeatureVector           featVec_;
     static shared_ptr<ORBVocabulary>  pORBvocab_;
     vector<bool>                   vbOutlier_;
-    int                            N_;
-    vector<float>                  vInvLevelSigma2_;
+    int                            N_; //total number of features
+    vector<float>                  vInvLevelSigma2_; //used in g2o optimization, edge information 
+    
     //for key frames connection
     std::map<Frame::Ptr,int>    connectedKeyFrameWeights_;
     std::vector<Frame::Ptr>     orderedConnectedKeyFrames_;
-    std::vector<int>               orderedWeights_;
-    size_t                      fuseTargetFrameId_;
-    size_t                      baId_;
-    size_t                      baFixedId_;
+    std::vector<int>            orderedWeights_;
+    
+    //some flag for performance
+    size_t                      fuseTargetFrameId_; //only used for fuse, in Map::searchInNeighbor
+    size_t                      baId_;  //only used for localBA
+    size_t                      baFixedId_;//only used for localBA
 public: // data members 
     Frame();
     Frame( long id, double time_stamp=0, SE3<double> Tcw=SE3<double>(), Camera::Ptr camera=nullptr, Mat color=Mat(), Mat depth=Mat() );
@@ -91,6 +96,7 @@ public: // data members
     bool isInFrame( const Vector3d& pt_world );
     bool isInFrame( const Vector2d& pD2c);
     
+    //a simple and slow version
     vector<size_t> getFeaturesInAera(float x, float y, float r) const;
 
     bool isInFrustum(MapPoint::Ptr pMp);

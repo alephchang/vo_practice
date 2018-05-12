@@ -243,7 +243,6 @@ void Frame::computeStereoMatches()
     }
 }
 
-///TODO: redefine findDepth for stereo type
 void Frame::collectDetphFromImDetph()
 {
     uDepth_ = vector<float>(N_,-1.0f);
@@ -315,8 +314,7 @@ bool Frame::isInFrustum(MapPoint::Ptr pMp)
     
     Vector3d Pn = pMp->norm_;
     //assert(std::abs<double>(Pn.norm()-1.0)<1e-10);
-    Vector3d Ow = -Tcw_.rotationMatrix().transpose()*Tcw_.translation();
-    Vector3d PO = P - Ow;
+    Vector3d PO = P - Twc_.translation();//P - OW;
     const double viewCos = PO.dot(Pn)/PO.norm();
     if(viewCos < 0.5) return false;
     pMp->track_in_view_ = true;
@@ -340,13 +338,11 @@ vector<size_t> Frame::getFeaturesInAera(float x, float y, float r) const
     return vIndices;
 }
 
-
-
-
 void Frame::addMapPoint(MapPoint::Ptr pMp, size_t i)
 {
     vpMapPoints_[i] = pMp;
 }
+
 std::vector<cv::Mat> toDescriptorVector(const cv::Mat &Descriptors)
 {
     std::vector<cv::Mat> vDesc;
