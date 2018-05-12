@@ -21,7 +21,7 @@ for a new frame:
         update connection(i.e. covisibility)
         fuse map.mappoints,(i.e. merge close mappoints)
         local bundle adjustment for current keyframe
-    else:
+    else://tracking fails, re-init
       estimate the pose by motion
       add the points to map.mappoints
 ```
