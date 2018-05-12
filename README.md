@@ -9,6 +9,7 @@ for a new frame:
   detect features and compute features description
   if state==initilize:
     compute the depth by stereo and add the points to map.mappoints
+    state = OK
   else:
     match features with previous frame
     estimate the pose by PnP
