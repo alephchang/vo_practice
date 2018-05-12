@@ -45,7 +45,7 @@ The following table shows the ATE and REP result on three sequence,including 03,
 | max (m)      | 4.40 | 1.22  | 6.04   |
 | RPE          | 0.57  |0.31   | 0.54  |
 
-The following two figures shows the trajectory comparison and RPE result of sequence 07.
+The following figure shows the trajectory comparison of sequence 07.
 ![07_ate_r](https://github.com/alephchang/vo_practice/blob/master/evaluate/result/07_ate_r.png)
 
 
