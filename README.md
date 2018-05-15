@@ -32,7 +32,7 @@ We use several sequences from [KITTI dataset] to show the result.
 
 The evaluation tool is from [TUM tools].
 
-The following table shows the ATE and REP result on three sequence,including 03, 04 and 07.
+The following table shows the ATE and RPE result on three sequence,including 03, 04 and 07.
 
 | sequence id  | 03    | 04    | 07    |
 |--------------|-------|-------|-------|
